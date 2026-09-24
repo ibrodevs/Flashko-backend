@@ -35,30 +35,112 @@ class FlashcardCardItemSerializer(serializers.Serializer):
 
 class FlashcardSetListSerializer(serializers.ModelSerializer):
     cards_count = serializers.SerializerMethodField()
+    share_id = serializers.UUIDField(read_only=True)
+    has_active_session = serializers.SerializerMethodField()
+    mistakes_count = serializers.SerializerMethodField()
 
     class Meta:
         model = FlashcardSet
-        fields = ['id', 'title', 'description', 'cards_count', 'created_at', 'updated_at']
-        read_only_fields = ['id', 'cards_count', 'created_at', 'updated_at']
+        fields = [
+            'id', 'title', 'description', 'cards_count', 'share_id',
+            'has_active_session', 'mistakes_count', 'created_at', 'updated_at'
+        ]
+        read_only_fields = [
+            'id', 'cards_count', 'share_id', 'has_active_session',
+            'mistakes_count', 'created_at', 'updated_at'
+        ]
 
     def get_cards_count(self, obj):
         if hasattr(obj, 'cards_count'):
             return obj.cards_count
         return obj.cards.count()
+
+    def get_has_active_session(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user or not request.user.is_authenticated:
+            return False
+        from apps.quiz.models import StudySession
+        return StudySession.objects.filter(set=obj, user=request.user, is_completed=False).exists()
+
+    def get_mistakes_count(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user or not request.user.is_authenticated:
+            return 0
+        from apps.quiz.models import StudyAnswer
+        return StudyAnswer.objects.filter(
+            session__set=obj,
+            session__user=request.user,
+            correct=False
+        ).values('flashcard_id').distinct().count()
 
 class FlashcardSetDetailSerializer(serializers.ModelSerializer):
     cards = FlashcardSerializer(many=True, read_only=True)
     cards_count = serializers.SerializerMethodField()
+    share_id = serializers.UUIDField(read_only=True)
+    author_username = serializers.CharField(source='user.username', read_only=True)
+    active_session = serializers.SerializerMethodField()
+    mistakes_count = serializers.SerializerMethodField()
+    mistake_card_ids = serializers.SerializerMethodField()
 
     class Meta:
         model = FlashcardSet
-        fields = ['id', 'title', 'description', 'cards_count', 'cards', 'created_at', 'updated_at']
-        read_only_fields = ['id', 'cards_count', 'cards', 'created_at', 'updated_at']
+        fields = [
+            'id', 'title', 'description', 'share_id', 'is_public',
+            'author_username', 'cards_count', 'cards',
+            'active_session', 'mistakes_count', 'mistake_card_ids',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = [
+            'id', 'share_id', 'author_username', 'cards_count', 'cards',
+            'active_session', 'mistakes_count', 'mistake_card_ids',
+            'created_at', 'updated_at'
+        ]
 
     def get_cards_count(self, obj):
         if hasattr(obj, 'cards_count'):
             return obj.cards_count
         return obj.cards.count()
+
+    def get_active_session(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user or not request.user.is_authenticated:
+            return None
+        from apps.quiz.models import StudySession
+        active = StudySession.objects.filter(set=obj, user=request.user, is_completed=False).order_by('-created_at').first()
+        if active:
+            return {
+                'session_id': active.id,
+                'current_question_index': active.current_question_index,
+                'total_questions': active.total_questions,
+                'correct_answers': active.correct_answers,
+                'incorrect_answers': active.incorrect_answers,
+                'mistakes_only': active.mistakes_only,
+                'created_at': active.created_at,
+            }
+        return None
+
+    def get_mistakes_count(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user or not request.user.is_authenticated:
+            return 0
+        from apps.quiz.models import StudyAnswer
+        return StudyAnswer.objects.filter(
+            session__set=obj,
+            session__user=request.user,
+            correct=False
+        ).values('flashcard_id').distinct().count()
+
+    def get_mistake_card_ids(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user or not request.user.is_authenticated:
+            return []
+        from apps.quiz.models import StudyAnswer
+        return list(StudyAnswer.objects.filter(
+            session__set=obj,
+            session__user=request.user,
+            correct=False
+        ).values_list('flashcard_id', flat=True).distinct())
+
 
 class FlashcardSetCreateUpdateSerializer(serializers.ModelSerializer):
     cards = FlashcardCardItemSerializer(many=True, required=False)

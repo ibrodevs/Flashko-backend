@@ -35,6 +35,13 @@ class QuizStartView(APIView):
                 prev_session = get_object_or_404(StudySession, pk=from_session_id, user=request.user)
                 mistake_ids = prev_session.answers.filter(correct=False).values_list('flashcard_id', flat=True).distinct()
                 target_cards = [c for c in all_cards if c.id in mistake_ids]
+            else:
+                mistake_ids = StudyAnswer.objects.filter(
+                    session__set=flashcard_set,
+                    session__user=request.user,
+                    correct=False
+                ).values_list('flashcard_id', flat=True).distinct()
+                target_cards = [c for c in all_cards if c.id in mistake_ids]
             
             if not target_cards:
                 # If no session specified or no mistakes found
@@ -88,6 +95,13 @@ class QuizStartView(APIView):
                 'correct_text': correct_def
             })
 
+        # Archive any previous uncompleted sessions for this set so user only has 1 active draft
+        StudySession.objects.filter(
+            user=request.user,
+            set=flashcard_set,
+            is_completed=False
+        ).update(is_completed=True, completed_at=timezone.now())
+
         session = StudySession.objects.create(
             user=request.user,
             set=flashcard_set,
@@ -99,6 +113,7 @@ class QuizStartView(APIView):
             questions_data=questions_data,
             current_question_index=0
         )
+
 
         first_q = questions_data[0]
         # Never send correct_option or correct_text in options payload
@@ -217,11 +232,16 @@ class QuizDetailView(APIView):
         session = get_object_or_404(StudySession, pk=session_id, user=request.user)
         serializer = StudySessionSerializer(session)
         data = dict(serializer.data)
+        data['session_id'] = session.id
+        data['set_id'] = session.set.id
+        data['set_title'] = session.set.title
+        data['correct_count'] = session.correct_answers
+        data['incorrect_count'] = session.incorrect_answers
         
         # If not completed, include current question
         if not session.is_completed and session.current_question_index < len(session.questions_data):
             curr_q = session.questions_data[session.current_question_index]
-            data['current_question'] = {
+            client_q = {
                 'question_id': curr_q['question_id'],
                 'term': curr_q['term'],
                 'question': curr_q['question'],
@@ -229,7 +249,20 @@ class QuizDetailView(APIView):
                 'question_number': session.current_question_index + 1,
                 'total_questions': session.total_questions
             }
+            data['current_question'] = client_q
+            data['question'] = client_q
         return Response(data, status=status.HTTP_200_OK)
+
+class QuizDiscardView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, session_id):
+        session = get_object_or_404(StudySession, pk=session_id, user=request.user)
+        if not session.is_completed:
+            session.is_completed = True
+            session.completed_at = timezone.now()
+            session.save()
+        return Response({'detail': 'Черновик теста отменен.'}, status=status.HTTP_200_OK)
 
 class QuizFinishView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -242,3 +275,4 @@ class QuizFinishView(APIView):
             session.save()
         serializer = StudySessionSerializer(session)
         return Response(serializer.data, status=status.HTTP_200_OK)
+

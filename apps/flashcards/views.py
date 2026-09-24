@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.db.models import Count
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, status, permissions
@@ -18,7 +19,7 @@ class FlashcardSetListCreateView(APIView):
         sets = FlashcardSet.objects.filter(user=request.user).annotate(
             cards_count=Count('cards')
         ).order_by('-created_at')
-        serializer = FlashcardSetListSerializer(sets, many=True)
+        serializer = FlashcardSetListSerializer(sets, many=True, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def post(self, request):
@@ -29,7 +30,7 @@ class FlashcardSetListCreateView(APIView):
         if serializer.is_valid():
             set_instance = serializer.save()
             # Return detail serializer with full cards
-            detail_serializer = FlashcardSetDetailSerializer(set_instance)
+            detail_serializer = FlashcardSetDetailSerializer(set_instance, context={'request': request})
             return Response(detail_serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -41,7 +42,7 @@ class FlashcardSetDetailView(APIView):
 
     def get(self, request, pk):
         set_instance = self.get_object(pk, request.user)
-        serializer = FlashcardSetDetailSerializer(set_instance)
+        serializer = FlashcardSetDetailSerializer(set_instance, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def patch(self, request, pk):
@@ -54,7 +55,7 @@ class FlashcardSetDetailView(APIView):
         )
         if serializer.is_valid():
             updated_instance = serializer.save()
-            detail_serializer = FlashcardSetDetailSerializer(updated_instance)
+            detail_serializer = FlashcardSetDetailSerializer(updated_instance, context={'request': request})
             return Response(detail_serializer.data, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -62,6 +63,50 @@ class FlashcardSetDetailView(APIView):
         set_instance = self.get_object(pk, request.user)
         set_instance.delete()
         return Response({'detail': 'Набор успешно удален.'}, status=status.HTTP_204_NO_CONTENT)
+
+class FlashcardSetShareView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, share_id):
+        set_instance = get_object_or_404(
+            FlashcardSet.objects.prefetch_related('cards').select_related('user'),
+            share_id=share_id,
+            is_public=True
+        )
+        serializer = FlashcardSetDetailSerializer(set_instance, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+class FlashcardSetCopyView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, share_id):
+        set_instance = get_object_or_404(
+            FlashcardSet.objects.prefetch_related('cards'),
+            share_id=share_id,
+            is_public=True
+        )
+        
+        with transaction.atomic():
+            new_title = f"{set_instance.title} (копия)" if set_instance.user == request.user else set_instance.title
+            new_set = FlashcardSet.objects.create(
+                user=request.user,
+                title=new_title,
+                description=set_instance.description,
+            )
+            cards_to_copy = [
+                Flashcard(
+                    set=new_set,
+                    term=card.term,
+                    definition=card.definition,
+                    order=card.order
+                )
+                for card in set_instance.cards.all()
+            ]
+            if cards_to_copy:
+                Flashcard.objects.bulk_create(cards_to_copy)
+
+        serializer = FlashcardSetDetailSerializer(new_set, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 class FlashcardListCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]

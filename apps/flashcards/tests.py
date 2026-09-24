@@ -42,3 +42,32 @@ class FlashcardsAPITest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(FlashcardSet.objects.filter(id=my_set.id).exists())
         self.assertFalse(Flashcard.objects.filter(term='t').exists())
+
+    def test_share_set_public_access(self):
+        my_set = FlashcardSet.objects.create(user=self.user1, title='Shared Set')
+        Flashcard.objects.create(set=my_set, term='dog', definition='собака')
+        
+        # Unauthenticated client can view public shared set
+        anon_client = APIClient()
+        response = anon_client.get(f'/api/sets/share/{my_set.share_id}/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['title'], 'Shared Set')
+        self.assertEqual(response.data['author_username'], 'user1')
+        self.assertEqual(len(response.data['cards']), 1)
+
+    def test_copy_shared_set(self):
+        my_set = FlashcardSet.objects.create(user=self.user1, title='Original')
+        Flashcard.objects.create(set=my_set, term='apple', definition='яблоко')
+        
+        # User2 copies User1's set
+        self.client.force_authenticate(user=self.user2)
+        response = self.client.post(f'/api/sets/share/{my_set.share_id}/copy/')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['title'], 'Original')
+        self.assertNotEqual(response.data['id'], my_set.id)
+        
+        # Check that user2 now owns a copy
+        user2_set = FlashcardSet.objects.get(id=response.data['id'])
+        self.assertEqual(user2_set.user, self.user2)
+        self.assertEqual(user2_set.cards.count(), 1)
+

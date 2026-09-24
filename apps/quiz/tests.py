@@ -54,3 +54,65 @@ class QuizAPITest(TestCase):
         self.assertIn('correct_option', ans_res.data)
         self.assertEqual(ans_res.data['total_questions'], 4)
         self.assertEqual(ans_res.data['current_question_index'], 1)
+
+    def test_quiz_draft_and_resume(self):
+        # 1. Start quiz
+        start_res = self.client.post('/api/quiz/start/', {'set_id': self.flashcard_set.id}, format='json')
+        session_id = start_res.data['session_id']
+        
+        # 2. Answer first question
+        q = start_res.data['question']
+        self.client.post(f'/api/quiz/{session_id}/answer/', {
+            'question_id': q['question_id'],
+            'selected_option': q['options'][0]['id']
+        }, format='json')
+
+        # 3. Check set detail includes active_session
+        set_res = self.client.get(f'/api/sets/{self.flashcard_set.id}/')
+        self.assertEqual(set_res.status_code, status.HTTP_200_OK)
+        self.assertIsNotNone(set_res.data['active_session'])
+        self.assertEqual(set_res.data['active_session']['session_id'], session_id)
+        self.assertEqual(set_res.data['active_session']['current_question_index'], 1)
+
+        # 4. Resume quiz via GET /api/quiz/{session_id}/
+        resume_res = self.client.get(f'/api/quiz/{session_id}/')
+        self.assertEqual(resume_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(resume_res.data['current_question']['question_number'], 2)
+
+        # 5. Discard draft session
+        discard_res = self.client.post(f'/api/quiz/{session_id}/discard/')
+        self.assertEqual(discard_res.status_code, status.HTTP_200_OK)
+        
+        # After discard, active_session is None
+        set_res_after = self.client.get(f'/api/sets/{self.flashcard_set.id}/')
+        self.assertIsNone(set_res_after.data['active_session'])
+
+    def test_review_all_mistakes(self):
+        # Start and intentionally fail question
+        start_res = self.client.post('/api/quiz/start/', {'set_id': self.flashcard_set.id}, format='json')
+        session_id = start_res.data['session_id']
+        q = start_res.data['question']
+        
+        # Answer with a wrong option or simulate incorrect answer
+        ans_res = self.client.post(f'/api/quiz/{session_id}/answer/', {
+            'question_id': q['question_id'],
+            'selected_option': 'a'
+        }, format='json')
+        
+        # If it happened to be correct, pick a wrong one for the second question
+        if ans_res.data['correct']:
+            q2 = ans_res.data['next_question']
+            wrong_opt = 'b' if ans_res.data['correct_option'] != 'b' else 'c'
+            ans_res = self.client.post(f'/api/quiz/{session_id}/answer/', {
+                'question_id': q2['question_id'],
+                'selected_option': wrong_opt
+            }, format='json')
+
+        # Now test review mistakes without from_session_id
+        mistake_quiz = self.client.post('/api/quiz/start/', {
+            'set_id': self.flashcard_set.id,
+            'mistakes_only': True
+        }, format='json')
+        self.assertEqual(mistake_quiz.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(mistake_quiz.data['total_questions'] >= 1)
+
