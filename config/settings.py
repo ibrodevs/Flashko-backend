@@ -15,14 +15,21 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-flashcards-quiz-web-app-se
 
 DEBUG = os.getenv('DEBUG', 'True').lower() in ('true', '1', 't')
 
-# Allow all hosts or custom list so everyone can access (PythonAnywhere, custom domains, localhost)
-allowed_hosts_env = os.getenv('ALLOWED_HOSTS', '*').strip()
-if allowed_hosts_env == '*' or not allowed_hosts_env:
+# Allow hosts for PythonAnywhere and local development
+ALLOWED_HOSTS = [
+    'flashkobackend21.pythonanywhere.com',
+    '.pythonanywhere.com',
+    'localhost',
+    '127.0.0.1',
+    '[::1]',
+]
+extra_hosts = os.getenv('ALLOWED_HOSTS', '')
+if extra_hosts and extra_hosts != '*':
+    for h in extra_hosts.split(','):
+        if h.strip() and h.strip() not in ALLOWED_HOSTS:
+            ALLOWED_HOSTS.append(h.strip())
+elif extra_hosts == '*':
     ALLOWED_HOSTS = ['*']
-else:
-    ALLOWED_HOSTS = [h.strip() for h in allowed_hosts_env.split(',') if h.strip()]
-    if '.pythonanywhere.com' not in allowed_hosts_env:
-        ALLOWED_HOSTS.append('.pythonanywhere.com')
 
 # Application definition
 INSTALLED_APPS = [
@@ -147,14 +154,34 @@ SIMPLE_JWT = {
 
 # Cookie Settings for Refresh Token
 JWT_AUTH_REFRESH_COOKIE = 'refresh_token'
-JWT_AUTH_COOKIE_SECURE = os.getenv('JWT_AUTH_COOKIE_SECURE', 'False' if DEBUG else 'True').lower() in ('true', '1', 't')
+# In cross-site production (Vercel https://flashko-ibro.vercel.app -> PythonAnywhere https://flashkobackend21.pythonanywhere.com),
+# browsers require SameSite='None' and Secure=True.
+JWT_AUTH_COOKIE_SECURE = os.getenv('JWT_AUTH_COOKIE_SECURE', 'True').lower() in ('true', '1', 't')
 JWT_AUTH_COOKIE_HTTP_ONLY = True
-# Cross-origin (e.g. Vercel calling PythonAnywhere) requires SameSite=None and Secure=True in production
-JWT_AUTH_COOKIE_SAMESITE = os.getenv('JWT_AUTH_COOKIE_SAMESITE', 'Lax' if DEBUG else 'None')
+JWT_AUTH_COOKIE_SAMESITE = os.getenv('JWT_AUTH_COOKIE_SAMESITE', 'None')
 JWT_AUTH_COOKIE_PATH = '/'
 
-# CORS Configuration: allow all origins so any client/frontend can make requests
-CORS_ALLOW_ALL_ORIGINS = os.getenv('CORS_ALLOW_ALL_ORIGINS', 'True').lower() in ('true', '1', 't')
+# CORS Configuration: allow ONLY our frontend and local development
+CORS_ALLOW_ALL_ORIGINS = False
+CORS_ALLOWED_ORIGINS = [
+    'https://flashko-ibro.vercel.app',
+    'https://flashkobackend21.pythonanywhere.com',
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+]
+
+# Allow any Vercel preview deployments for flashko-ibro
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https:\/\/flashko-ibro(-[a-zA-Z0-9_-]+)?\.vercel\.app$",
+]
+
+# Support optional env override to append more origins if needed
+extra_cors_origins = os.getenv('CORS_ALLOWED_ORIGINS', '')
+if extra_cors_origins:
+    for o in extra_cors_origins.split(','):
+        if o.strip() and o.strip() not in CORS_ALLOWED_ORIGINS:
+            CORS_ALLOWED_ORIGINS.append(o.strip())
+
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = [
     'accept',
@@ -169,16 +196,18 @@ CORS_ALLOW_HEADERS = [
 ]
 
 # CSRF Configuration
-csrf_origins_env = os.getenv('CSRF_TRUSTED_ORIGINS', '')
-if csrf_origins_env:
-    CSRF_TRUSTED_ORIGINS = [o.strip() for o in csrf_origins_env.split(',') if o.strip()]
-else:
-    CSRF_TRUSTED_ORIGINS = [
-        'http://localhost:3000',
-        'http://127.0.0.1:3000',
-        'https://*.pythonanywhere.com',
-        'https://*.vercel.app',
-    ]
+CSRF_TRUSTED_ORIGINS = [
+    'https://flashko-ibro.vercel.app',
+    'https://flashkobackend21.pythonanywhere.com',
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+]
+extra_csrf_origins = os.getenv('CSRF_TRUSTED_ORIGINS', '')
+if extra_csrf_origins:
+    for o in extra_csrf_origins.split(','):
+        if o.strip() and o.strip() not in CSRF_TRUSTED_ORIGINS:
+            CSRF_TRUSTED_ORIGINS.append(o.strip())
+
 
 # Internationalization
 LANGUAGE_CODE = 'ru-ru'
