@@ -26,7 +26,7 @@ class QuizAPITest(TestCase):
         Flashcard.objects.create(set=small_set, term='a', definition='b')
         response = self.client.post('/api/quiz/start/', {'set_id': small_set.id}, format='json')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('at least 4', response.data['detail'])
+        self.assertIn('минимум 4', response.data['detail'])
 
     def test_quiz_flow(self):
         # 1. Start quiz

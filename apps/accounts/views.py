@@ -52,7 +52,7 @@ class CustomTokenRefreshView(APIView):
     def post(self, request):
         refresh_token = request.COOKIES.get('refresh_token') or request.data.get('refresh')
         if not refresh_token:
-            return Response({'detail': 'Refresh token not provided.'}, status=status.HTTP_401_UNAUTHORIZED)
+            return Response({'detail': 'Токен обновления не предоставлен.'}, status=status.HTTP_401_UNAUTHORIZED)
 
         try:
             refresh = RefreshToken(refresh_token)
@@ -83,7 +83,7 @@ class LogoutView(APIView):
             except Exception:
                 pass
 
-        response = Response({'detail': 'Successfully logged out.'}, status=status.HTTP_200_OK)
+        response = Response({'detail': 'Успешный выход из системы.'}, status=status.HTTP_200_OK)
         delete_refresh_cookie(response)
         return response
 

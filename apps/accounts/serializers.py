@@ -1,6 +1,5 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from django.db.models import Count
 
 User = get_user_model()
 
@@ -33,22 +32,22 @@ class RegisterSerializer(serializers.Serializer):
     def validate_username(self, value):
         value = value.strip()
         if not value:
-            raise serializers.ValidationError("Username is required.")
+            raise serializers.ValidationError("Имя пользователя обязательно.")
         if User.objects.filter(username__iexact=value).exists():
-            raise serializers.ValidationError("Username is already taken.")
+            raise serializers.ValidationError("Это имя пользователя уже занято.")
         return value
 
     def validate_email(self, value):
         value = value.strip().lower()
         if not value:
-            raise serializers.ValidationError("Email is required.")
+            raise serializers.ValidationError("Email обязателен.")
         if User.objects.filter(email__iexact=value).exists():
-            raise serializers.ValidationError("Email is already registered.")
+            raise serializers.ValidationError("Email уже зарегистрирован.")
         return value
 
     def validate(self, attrs):
         if attrs['password'] != attrs['confirm_password']:
-            raise serializers.ValidationError({"confirm_password": "Passwords do not match."})
+            raise serializers.ValidationError({"confirm_password": "Пароли не совпадают."})
         return attrs
 
     def create(self, validated_data):
@@ -68,9 +67,9 @@ class LoginSerializer(serializers.Serializer):
         password = attrs.get('password', '')
 
         if not identifier:
-            raise serializers.ValidationError({"username_or_email": "Email or username is required."})
+            raise serializers.ValidationError({"username_or_email": "Email или имя пользователя обязательно."})
         if not password:
-            raise serializers.ValidationError({"password": "Password is required."})
+            raise serializers.ValidationError({"password": "Пароль обязателен."})
 
         # Try to find by email or username
         user = None
@@ -80,10 +79,10 @@ class LoginSerializer(serializers.Serializer):
             user = User.objects.filter(username__iexact=identifier).first()
 
         if not user or not user.check_password(password):
-            raise serializers.ValidationError({"non_field_errors": "Invalid email/username or password."})
+            raise serializers.ValidationError({"non_field_errors": "Неверный email/имя пользователя или пароль."})
 
         if not user.is_active:
-            raise serializers.ValidationError({"non_field_errors": "This account is disabled."})
+            raise serializers.ValidationError({"non_field_errors": "Этот аккаунт отключён."})
 
         attrs['user'] = user
         return attrs

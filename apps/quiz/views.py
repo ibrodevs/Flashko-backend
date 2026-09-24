@@ -25,7 +25,7 @@ class QuizStartView(APIView):
 
         if len(all_cards) < 4:
             return Response({
-                'detail': 'You need at least 4 flashcards to start a quiz.'
+                'detail': 'Для запуска теста требуется минимум 4 карточки.'
             }, status=status.HTTP_400_BAD_REQUEST)
 
         # Decide which cards to test
@@ -39,7 +39,7 @@ class QuizStartView(APIView):
             if not target_cards:
                 # If no session specified or no mistakes found
                 return Response({
-                    'detail': 'No mistakes to review.'
+                    'detail': 'Нет карточек с ошибками для повторения.'
                 }, status=status.HTTP_400_BAD_REQUEST)
         else:
             target_cards = list(all_cards)
@@ -82,7 +82,7 @@ class QuizStartView(APIView):
             questions_data.append({
                 'question_id': card.id,
                 'term': card.term,
-                'question': f'What does "{card.term}" mean?',
+                'question': f'Что означает «{card.term}»?',
                 'options': options,
                 'correct_option': correct_option,
                 'correct_text': correct_def
@@ -129,7 +129,7 @@ class QuizAnswerView(APIView):
 
         if session.is_completed:
             return Response({
-                'detail': 'Quiz session is already completed.',
+                'detail': 'Тестирование уже завершено.',
                 'is_completed': True,
                 'correct_count': session.correct_answers,
                 'incorrect_count': session.incorrect_answers,
@@ -148,11 +148,11 @@ class QuizAnswerView(APIView):
             session.is_completed = True
             session.completed_at = timezone.now()
             session.save()
-            return Response({'detail': 'All questions answered.', 'is_completed': True}, status=status.HTTP_200_OK)
+            return Response({'detail': 'Все вопросы пройдены.', 'is_completed': True}, status=status.HTTP_200_OK)
 
         q_data = session.questions_data[curr_idx]
         if q_data['question_id'] != question_id:
-            return Response({'detail': 'Question ID does not match current question.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': 'Идентификатор вопроса не совпадает с текущим.'}, status=status.HTTP_400_BAD_REQUEST)
 
         is_correct = (selected_option == q_data['correct_option'])
         

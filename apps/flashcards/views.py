@@ -61,7 +61,7 @@ class FlashcardSetDetailView(APIView):
     def delete(self, request, pk):
         set_instance = self.get_object(pk, request.user)
         set_instance.delete()
-        return Response({'detail': 'Set deleted successfully.'}, status=status.HTTP_204_NO_CONTENT)
+        return Response({'detail': 'Набор успешно удален.'}, status=status.HTTP_204_NO_CONTENT)
 
 class FlashcardListCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -98,4 +98,4 @@ class FlashcardDetailView(APIView):
     def delete(self, request, pk):
         card = self.get_object(pk, request.user)
         card.delete()
-        return Response({'detail': 'Card deleted successfully.'}, status=status.HTTP_204_NO_CONTENT)
+        return Response({'detail': 'Карточка успешно удалена.'}, status=status.HTTP_204_NO_CONTENT)
