@@ -24,7 +24,7 @@ import sys
 # 1. Path to your backend directory
 # REPLACE '<YOUR_USERNAME>' with your PythonAnywhere username:
 USERNAME = '<YOUR_USERNAME>'
-project_home = f'/home/{USERNAME}/Flash-cards/backend'
+project_home = f'/home/{USERNAME}/Flashko-backend'
 
 if project_home not in sys.path:
     sys.path.insert(0, project_home)
