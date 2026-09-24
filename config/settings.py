@@ -15,7 +15,14 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-flashcards-quiz-web-app-se
 
 DEBUG = os.getenv('DEBUG', 'True').lower() in ('true', '1', 't')
 
-ALLOWED_HOSTS = [host.strip() for host in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',') if host.strip()]
+# Allow all hosts or custom list so everyone can access (PythonAnywhere, custom domains, localhost)
+allowed_hosts_env = os.getenv('ALLOWED_HOSTS', '*').strip()
+if allowed_hosts_env == '*' or not allowed_hosts_env:
+    ALLOWED_HOSTS = ['*']
+else:
+    ALLOWED_HOSTS = [h.strip() for h in allowed_hosts_env.split(',') if h.strip()]
+    if '.pythonanywhere.com' not in allowed_hosts_env:
+        ALLOWED_HOSTS.append('.pythonanywhere.com')
 
 # Application definition
 INSTALLED_APPS = [
@@ -68,16 +75,25 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'config.wsgi.application'
 
-# Database
-# Use PostgreSQL
-DATABASE_URL = os.getenv('DATABASE_URL', 'postgres://imac5:@localhost:5432/flashcards')
-DATABASES = {
-    'default': dj_database_url.config(
-        default=DATABASE_URL,
-        conn_max_age=600,
-        ssl_require=False if DEBUG else os.getenv('DB_SSL_REQUIRE', 'False').lower() in ('true', '1', 't')
-    )
-}
+# Database configuration:
+# 1. If DATABASE_URL is set (PostgreSQL/MySQL), dj_database_url is used.
+# 2. Otherwise falls back to SQLite, perfect for PythonAnywhere free tier out of the box!
+DATABASE_URL = os.getenv('DATABASE_URL')
+if DATABASE_URL and DATABASE_URL.strip():
+    DATABASES = {
+        'default': dj_database_url.config(
+            default=DATABASE_URL.strip(),
+            conn_max_age=600,
+            ssl_require=False if DEBUG else os.getenv('DB_SSL_REQUIRE', 'False').lower() in ('true', '1', 't')
+        )
+    }
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 # Custom User Model
 AUTH_USER_MODEL = 'accounts.User'
@@ -131,21 +147,38 @@ SIMPLE_JWT = {
 
 # Cookie Settings for Refresh Token
 JWT_AUTH_REFRESH_COOKIE = 'refresh_token'
-JWT_AUTH_COOKIE_SECURE = not DEBUG
+JWT_AUTH_COOKIE_SECURE = os.getenv('JWT_AUTH_COOKIE_SECURE', 'False' if DEBUG else 'True').lower() in ('true', '1', 't')
 JWT_AUTH_COOKIE_HTTP_ONLY = True
-JWT_AUTH_COOKIE_SAMESITE = 'Lax'
+# Cross-origin (e.g. Vercel calling PythonAnywhere) requires SameSite=None and Secure=True in production
+JWT_AUTH_COOKIE_SAMESITE = os.getenv('JWT_AUTH_COOKIE_SAMESITE', 'Lax' if DEBUG else 'None')
 JWT_AUTH_COOKIE_PATH = '/'
 
-# CORS Configuration
-CORS_ALLOWED_ORIGINS = [
-    origin.strip() for origin in os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000').split(',') if origin.strip()
-]
+# CORS Configuration: allow all origins so any client/frontend can make requests
+CORS_ALLOW_ALL_ORIGINS = os.getenv('CORS_ALLOW_ALL_ORIGINS', 'True').lower() in ('true', '1', 't')
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
 
 # CSRF Configuration
-CSRF_TRUSTED_ORIGINS = [
-    origin.strip() for origin in os.getenv('CSRF_TRUSTED_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000').split(',') if origin.strip()
-]
+csrf_origins_env = os.getenv('CSRF_TRUSTED_ORIGINS', '')
+if csrf_origins_env:
+    CSRF_TRUSTED_ORIGINS = [o.strip() for o in csrf_origins_env.split(',') if o.strip()]
+else:
+    CSRF_TRUSTED_ORIGINS = [
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+        'https://*.pythonanywhere.com',
+        'https://*.vercel.app',
+    ]
 
 # Internationalization
 LANGUAGE_CODE = 'en-us'
