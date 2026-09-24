@@ -58,3 +58,54 @@ class AccountsAPITest(TestCase):
         response = self.client.get(self.me_url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['username'], 'user1')
+
+    def test_change_password_success(self):
+        user = User.objects.create_user(username='pwuser', email='pw@example.com', password='oldpassword123')
+        self.client.force_authenticate(user=user)
+        data = {
+            'old_password': 'oldpassword123',
+            'new_password': 'newpassword456',
+            'confirm_password': 'newpassword456',
+        }
+        response = self.client.post('/api/auth/change-password/', data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('access', response.data)
+        
+        # Verify user can log in with new password
+        user.refresh_from_db()
+        self.assertTrue(user.check_password('newpassword456'))
+        self.assertFalse(user.check_password('oldpassword123'))
+
+    def test_change_password_wrong_current(self):
+        user = User.objects.create_user(username='pwuser2', email='pw2@example.com', password='oldpassword123')
+        self.client.force_authenticate(user=user)
+        data = {
+            'old_password': 'wrongpassword',
+            'new_password': 'newpassword456',
+        }
+        response = self.client.post('/api/auth/change-password/', data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('old_password', response.data)
+
+    def test_change_password_same_password(self):
+        user = User.objects.create_user(username='pwuser3', email='pw3@example.com', password='oldpassword123')
+        self.client.force_authenticate(user=user)
+        data = {
+            'old_password': 'oldpassword123',
+            'new_password': 'oldpassword123',
+        }
+        response = self.client.post('/api/auth/change-password/', data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('new_password', response.data)
+
+    def test_change_password_confirm_mismatch(self):
+        user = User.objects.create_user(username='pwuser4', email='pw4@example.com', password='oldpassword123')
+        self.client.force_authenticate(user=user)
+        data = {
+            'old_password': 'oldpassword123',
+            'new_password': 'newpassword456',
+            'confirm_password': 'differentpassword',
+        }
+        response = self.client.post('/api/auth/change-password/', data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('confirm_password', response.data)

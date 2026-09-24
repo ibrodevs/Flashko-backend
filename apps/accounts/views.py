@@ -3,7 +3,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
-from .serializers import RegisterSerializer, LoginSerializer, UserSerializer
+from .serializers import RegisterSerializer, LoginSerializer, UserSerializer, ChangePasswordSerializer
 from .authentication import set_refresh_cookie, delete_refresh_cookie
 
 class RegisterView(APIView):
@@ -93,3 +93,24 @@ class MeView(APIView):
     def get(self, request):
         serializer = UserSerializer(request.user)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+class ChangePasswordView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = ChangePasswordSerializer(data=request.data, context={'request': request})
+        if serializer.is_valid():
+            user = request.user
+            user.set_password(serializer.validated_data['new_password'])
+            user.save()
+
+            # Return new tokens so session continues seamlessly
+            refresh = RefreshToken.for_user(user)
+            response = Response({
+                'detail': 'Пароль успешно изменён.',
+                'access': str(refresh.access_token),
+                'refresh': str(refresh),
+            }, status=status.HTTP_200_OK)
+            set_refresh_cookie(response, refresh)
+            return response
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
