@@ -183,6 +183,9 @@ if extra_cors_origins:
             CORS_ALLOWED_ORIGINS.append(o.strip())
 
 CORS_ALLOW_CREDENTIALS = True
+# Cache successful preflight responses so repeated API calls do not pay an
+# extra OPTIONS round trip across Vercel -> PythonAnywhere every time.
+CORS_PREFLIGHT_MAX_AGE = 86400
 CORS_ALLOW_HEADERS = [
     'accept',
     'accept-encoding',
@@ -207,7 +210,6 @@ if extra_csrf_origins:
     for o in extra_csrf_origins.split(','):
         if o.strip() and o.strip() not in CSRF_TRUSTED_ORIGINS:
             CSRF_TRUSTED_ORIGINS.append(o.strip())
-
 
 # Internationalization
 LANGUAGE_CODE = 'ru-ru'
