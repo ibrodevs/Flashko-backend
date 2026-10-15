@@ -8,6 +8,7 @@ from apps.flashcards.models import FlashcardSet, Flashcard
 from .models import StudySession, StudyAnswer
 from .serializers import StudySessionSerializer, QuizStartSerializer, QuizAnswerSerializer
 
+
 class QuizStartView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -21,56 +22,83 @@ class QuizStartView(APIView):
         from_session_id = serializer.validated_data.get('from_session_id')
 
         flashcard_set = get_object_or_404(FlashcardSet, pk=set_id, user=request.user)
-        all_cards = list(flashcard_set.cards.all())
+        all_cards = list(flashcard_set.cards.only('id', 'term', 'definition'))
 
         if len(all_cards) < 4:
             return Response({
                 'detail': 'Для запуска теста требуется минимум 4 карточки.'
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        # Decide which cards to test
+        # Decide which cards to test. Materialize mistake ids once so membership
+        # checks are O(1) instead of repeatedly walking a QuerySet.
         if mistakes_only:
-            target_cards = []
             if from_session_id:
                 prev_session = get_object_or_404(StudySession, pk=from_session_id, user=request.user)
-                mistake_ids = prev_session.answers.filter(correct=False).values_list('flashcard_id', flat=True).distinct()
-                target_cards = [c for c in all_cards if c.id in mistake_ids]
+                mistake_ids = set(
+                    prev_session.answers.filter(correct=False)
+                    .values_list('flashcard_id', flat=True)
+                    .distinct()
+                )
             else:
-                mistake_ids = StudyAnswer.objects.filter(
-                    session__set=flashcard_set,
-                    session__user=request.user,
-                    correct=False
-                ).values_list('flashcard_id', flat=True).distinct()
-                target_cards = [c for c in all_cards if c.id in mistake_ids]
-            
+                mistake_ids = set(
+                    StudyAnswer.objects.filter(
+                        session__set=flashcard_set,
+                        session__user=request.user,
+                        correct=False
+                    )
+                    .values_list('flashcard_id', flat=True)
+                    .distinct()
+                )
+
+            target_cards = [card for card in all_cards if card.id in mistake_ids]
             if not target_cards:
-                # If no session specified or no mistakes found
                 return Response({
                     'detail': 'Нет карточек с ошибками для повторения.'
                 }, status=status.HTTP_400_BAD_REQUEST)
         else:
             target_cards = list(all_cards)
 
-        # Shuffle questions
         random.shuffle(target_cards)
 
         questions_data = []
         option_letters = ['a', 'b', 'c', 'd']
 
+        # Precompute definitions once. The previous implementation rebuilt a
+        # list/set of all definitions for every question, making quiz startup
+        # roughly O(n²) for large sets.
+        definition_entries = [
+            (card.id, card.definition.strip())
+            for card in all_cards
+        ]
+        unique_definitions = list(dict.fromkeys(definition for _, definition in definition_entries))
+        unique_definition_index = {
+            definition: idx for idx, definition in enumerate(unique_definitions)
+        }
+        fallback_entries = definition_entries[:4]
+
         for card in target_cards:
             correct_def = card.definition.strip()
-            # Distractors from other cards
-            other_defs = list({c.definition.strip() for c in all_cards if c.id != card.id and c.definition.strip() != correct_def})
-            
-            # If not enough distinct definitions, fall back to other cards' definitions anyway
-            if len(other_defs) < 3:
-                other_defs = [c.definition.strip() for c in all_cards if c.id != card.id]
-            
-            # Sample 3 distractors
-            if len(other_defs) >= 3:
-                distractors = random.sample(other_defs, 3)
+
+            if len(unique_definitions) >= 4:
+                correct_idx = unique_definition_index[correct_def]
+                sampled_indexes = random.sample(range(len(unique_definitions) - 1), 3)
+                distractors = [
+                    unique_definitions[idx if idx < correct_idx else idx + 1]
+                    for idx in sampled_indexes
+                ]
             else:
-                distractors = (other_defs * 3)[:3]
+                # With fewer than four distinct definitions, keep the original
+                # fallback behavior (duplicates are allowed) but only inspect a
+                # constant-size prefix instead of scanning the full set.
+                fallback_pool = [
+                    definition
+                    for card_id, definition in fallback_entries
+                    if card_id != card.id
+                ]
+                if len(fallback_pool) >= 3:
+                    distractors = random.sample(fallback_pool, 3)
+                else:
+                    distractors = (fallback_pool * 3)[:3]
 
             choices = [correct_def] + distractors
             random.shuffle(choices)
@@ -114,9 +142,7 @@ class QuizStartView(APIView):
             current_question_index=0
         )
 
-
         first_q = questions_data[0]
-        # Never send correct_option or correct_text in options payload
         client_question = {
             'question_id': first_q['question_id'],
             'term': first_q['term'],
@@ -136,11 +162,20 @@ class QuizStartView(APIView):
             'question': client_question
         }, status=status.HTTP_201_CREATED)
 
+
 class QuizAnswerView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, session_id):
-        session = get_object_or_404(StudySession, pk=session_id, user=request.user)
+        session = get_object_or_404(
+            StudySession.objects.only(
+                'id', 'set_id', 'questions_data', 'current_question_index',
+                'is_completed', 'correct_answers', 'incorrect_answers',
+                'total_questions', 'completed_at'
+            ),
+            pk=session_id,
+            user=request.user
+        )
 
         if session.is_completed:
             return Response({
@@ -162,24 +197,22 @@ class QuizAnswerView(APIView):
         if curr_idx >= len(session.questions_data):
             session.is_completed = True
             session.completed_at = timezone.now()
-            session.save()
+            session.save(update_fields=['is_completed', 'completed_at'])
             return Response({'detail': 'Все вопросы пройдены.', 'is_completed': True}, status=status.HTTP_200_OK)
 
         q_data = session.questions_data[curr_idx]
         if q_data['question_id'] != question_id:
             return Response({'detail': 'Идентификатор вопроса не совпадает с текущим.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        is_correct = (selected_option == q_data['correct_option'])
-        
-        # Find selected text
+        is_correct = selected_option == q_data['correct_option']
+
         selected_text = ''
         for opt in q_data['options']:
             if opt['id'] == selected_option:
                 selected_text = opt['text']
                 break
 
-        # Save StudyAnswer
-        card = get_object_or_404(Flashcard, pk=question_id)
+        card = get_object_or_404(Flashcard, pk=question_id, set_id=session.set_id)
         StudyAnswer.objects.create(
             session=session,
             flashcard=card,
@@ -194,11 +227,16 @@ class QuizAnswerView(APIView):
             session.incorrect_answers += 1
 
         session.current_question_index += 1
+        update_fields = ['correct_answers', 'incorrect_answers', 'current_question_index']
         if session.current_question_index >= session.total_questions:
             session.is_completed = True
             session.completed_at = timezone.now()
+            update_fields.extend(['is_completed', 'completed_at'])
 
-        session.save()
+        # Do not rewrite the potentially large questions_data JSON on every
+        # answer. Updating only changed columns keeps answer latency stable as
+        # the number of cards grows.
+        session.save(update_fields=update_fields)
 
         next_question = None
         if not session.is_completed and session.current_question_index < len(session.questions_data):
@@ -225,20 +263,24 @@ class QuizAnswerView(APIView):
             'next_question': next_question
         }, status=status.HTTP_200_OK)
 
+
 class QuizDetailView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, session_id):
-        session = get_object_or_404(StudySession, pk=session_id, user=request.user)
+        session = get_object_or_404(
+            StudySession.objects.select_related('set').prefetch_related('answers__flashcard'),
+            pk=session_id,
+            user=request.user
+        )
         serializer = StudySessionSerializer(session)
         data = dict(serializer.data)
         data['session_id'] = session.id
-        data['set_id'] = session.set.id
+        data['set_id'] = session.set_id
         data['set_title'] = session.set.title
         data['correct_count'] = session.correct_answers
         data['incorrect_count'] = session.incorrect_answers
-        
-        # If not completed, include current question
+
         if not session.is_completed and session.current_question_index < len(session.questions_data):
             curr_q = session.questions_data[session.current_question_index]
             client_q = {
@@ -253,6 +295,7 @@ class QuizDetailView(APIView):
             data['question'] = client_q
         return Response(data, status=status.HTTP_200_OK)
 
+
 class QuizDiscardView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -261,18 +304,22 @@ class QuizDiscardView(APIView):
         if not session.is_completed:
             session.is_completed = True
             session.completed_at = timezone.now()
-            session.save()
+            session.save(update_fields=['is_completed', 'completed_at'])
         return Response({'detail': 'Черновик теста отменен.'}, status=status.HTTP_200_OK)
+
 
 class QuizFinishView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, session_id):
-        session = get_object_or_404(StudySession, pk=session_id, user=request.user)
+        session = get_object_or_404(
+            StudySession.objects.select_related('set').prefetch_related('answers__flashcard'),
+            pk=session_id,
+            user=request.user
+        )
         if not session.is_completed:
             session.is_completed = True
             session.completed_at = timezone.now()
-            session.save()
+            session.save(update_fields=['is_completed', 'completed_at'])
         serializer = StudySessionSerializer(session)
         return Response(serializer.data, status=status.HTTP_200_OK)
-
