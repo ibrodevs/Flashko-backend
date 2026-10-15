@@ -1,3 +1,4 @@
+from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -5,6 +6,9 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 from .serializers import RegisterSerializer, LoginSerializer, UserSerializer, ChangePasswordSerializer
 from .authentication import set_refresh_cookie, delete_refresh_cookie
+
+User = get_user_model()
+
 
 class RegisterView(APIView):
     permission_classes = [AllowAny]
@@ -15,16 +19,17 @@ class RegisterView(APIView):
             user = serializer.save()
             refresh = RefreshToken.for_user(user)
             user_data = UserSerializer(user).data
-            
+
             response = Response({
                 'user': user_data,
                 'access': str(refresh.access_token),
                 'refresh': str(refresh)
             }, status=status.HTTP_201_CREATED)
-            
+
             set_refresh_cookie(response, refresh)
             return response
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
 class LoginView(APIView):
     permission_classes = [AllowAny]
@@ -46,6 +51,7 @@ class LoginView(APIView):
             return response
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+
 class CustomTokenRefreshView(APIView):
     permission_classes = [AllowAny]
 
@@ -56,9 +62,20 @@ class CustomTokenRefreshView(APIView):
 
         try:
             refresh = RefreshToken(refresh_token)
-            data = {'access': str(refresh.access_token)}
+            user = User.objects.get(pk=refresh['user_id'], is_active=True)
 
-            # Rotate token
+            # Return the lightweight user payload with the refreshed tokens.
+            # The frontend can restore the session without a second /auth/me request.
+            data = {
+                'access': str(refresh.access_token),
+                'user': {
+                    'id': user.id,
+                    'username': user.username,
+                    'email': user.email,
+                    'created_at': user.created_at,
+                },
+            }
+
             refresh.set_jti()
             refresh.set_exp()
             data['refresh'] = str(refresh)
@@ -66,10 +83,11 @@ class CustomTokenRefreshView(APIView):
             response = Response(data, status=status.HTTP_200_OK)
             set_refresh_cookie(response, refresh)
             return response
-        except TokenError as e:
+        except (TokenError, User.DoesNotExist) as e:
             response = Response({'detail': str(e)}, status=status.HTTP_401_UNAUTHORIZED)
             delete_refresh_cookie(response)
             return response
+
 
 class LogoutView(APIView):
     permission_classes = [AllowAny]
@@ -87,12 +105,14 @@ class LogoutView(APIView):
         delete_refresh_cookie(response)
         return response
 
+
 class MeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         serializer = UserSerializer(request.user)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
 
 class ChangePasswordView(APIView):
     permission_classes = [IsAuthenticated]
@@ -104,7 +124,6 @@ class ChangePasswordView(APIView):
             user.set_password(serializer.validated_data['new_password'])
             user.save()
 
-            # Return new tokens so session continues seamlessly
             refresh = RefreshToken.for_user(user)
             response = Response({
                 'detail': 'Пароль успешно изменён.',

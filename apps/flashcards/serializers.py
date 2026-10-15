@@ -1,6 +1,8 @@
 from rest_framework import serializers
 from django.db import transaction
+from django.utils import timezone
 from .models import FlashcardSet, Flashcard
+
 
 class FlashcardSerializer(serializers.ModelSerializer):
     class Meta:
@@ -18,6 +20,7 @@ class FlashcardSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Definition cannot be empty.")
         return value.strip()
 
+
 class FlashcardCardItemSerializer(serializers.Serializer):
     id = serializers.IntegerField(required=False)
     term = serializers.CharField(required=True)
@@ -32,6 +35,7 @@ class FlashcardCardItemSerializer(serializers.Serializer):
         if not value or not value.strip():
             raise serializers.ValidationError("Definition cannot be empty.")
         return value.strip()
+
 
 class FlashcardSetListSerializer(serializers.ModelSerializer):
     cards_count = serializers.SerializerMethodField()
@@ -56,6 +60,9 @@ class FlashcardSetListSerializer(serializers.ModelSerializer):
         return obj.cards.count()
 
     def get_has_active_session(self, obj):
+        if hasattr(obj, 'has_active_session'):
+            return bool(obj.has_active_session)
+
         request = self.context.get('request')
         if not request or not request.user or not request.user.is_authenticated:
             return False
@@ -63,6 +70,9 @@ class FlashcardSetListSerializer(serializers.ModelSerializer):
         return StudySession.objects.filter(set=obj, user=request.user, is_completed=False).exists()
 
     def get_mistakes_count(self, obj):
+        if hasattr(obj, 'mistakes_count'):
+            return int(obj.mistakes_count)
+
         request = self.context.get('request')
         if not request or not request.user or not request.user.is_authenticated:
             return 0
@@ -72,6 +82,7 @@ class FlashcardSetListSerializer(serializers.ModelSerializer):
             session__user=request.user,
             correct=False
         ).values('flashcard_id').distinct().count()
+
 
 class FlashcardSetDetailSerializer(serializers.ModelSerializer):
     cards = FlashcardSerializer(many=True, read_only=True)
@@ -158,7 +169,7 @@ class FlashcardSetCreateUpdateSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         cards_data = validated_data.pop('cards', [])
         user = self.context['request'].user
-        
+
         with transaction.atomic():
             flashcard_set = FlashcardSet.objects.create(user=user, **validated_data)
             cards_to_create = [
@@ -172,7 +183,7 @@ class FlashcardSetCreateUpdateSerializer(serializers.ModelSerializer):
             ]
             if cards_to_create:
                 Flashcard.objects.bulk_create(cards_to_create)
-                
+
         return flashcard_set
 
     def update(self, instance, validated_data):
@@ -181,11 +192,14 @@ class FlashcardSetCreateUpdateSerializer(serializers.ModelSerializer):
         instance.description = validated_data.get('description', instance.description).strip()
         instance.save()
 
-        # If cards are provided in update, update/sync them
         if cards_data is not None:
             with transaction.atomic():
                 existing_cards = {card.id: card for card in instance.cards.all()}
-                kept_ids = []
+                kept_existing_ids = set()
+                cards_to_update = []
+                cards_to_create = []
+                now = timezone.now()
+
                 for idx, item in enumerate(cards_data):
                     card_id = item.get('id')
                     if card_id and card_id in existing_cards:
@@ -193,17 +207,29 @@ class FlashcardSetCreateUpdateSerializer(serializers.ModelSerializer):
                         card.term = item['term']
                         card.definition = item['definition']
                         card.order = idx
-                        card.save()
-                        kept_ids.append(card_id)
+                        card.updated_at = now
+                        kept_existing_ids.add(card_id)
+                        cards_to_update.append(card)
                     else:
-                        new_card = Flashcard.objects.create(
+                        cards_to_create.append(Flashcard(
                             set=instance,
                             term=item['term'],
                             definition=item['definition'],
                             order=idx
-                        )
-                        kept_ids.append(new_card.id)
-                # Delete removed cards
-                instance.cards.exclude(id__in=kept_ids).delete()
+                        ))
+
+                instance.cards.exclude(id__in=kept_existing_ids).delete()
+
+                if cards_to_update:
+                    Flashcard.objects.bulk_update(
+                        cards_to_update,
+                        ['term', 'definition', 'order', 'updated_at']
+                    )
+                if cards_to_create:
+                    Flashcard.objects.bulk_create(cards_to_create)
+
+            prefetched = getattr(instance, '_prefetched_objects_cache', None)
+            if prefetched is not None:
+                prefetched.pop('cards', None)
 
         return instance
