@@ -218,7 +218,6 @@ class FlashcardSetCreateUpdateSerializer(serializers.ModelSerializer):
                             order=idx
                         ))
 
-                # Delete removed old cards in one query, then batch writes.
                 instance.cards.exclude(id__in=kept_existing_ids).delete()
 
                 if cards_to_update:
@@ -229,8 +228,8 @@ class FlashcardSetCreateUpdateSerializer(serializers.ModelSerializer):
                 if cards_to_create:
                     Flashcard.objects.bulk_create(cards_to_create)
 
-            # get_object() prefetches cards; clear stale prefetched data so the
-            # response after an edit contains the newly saved card list.
-            instance._prefetched_objects_cache.pop('cards', None)
+            prefetched = getattr(instance, '_prefetched_objects_cache', None)
+            if prefetched is not None:
+                prefetched.pop('cards', None)
 
         return instance
